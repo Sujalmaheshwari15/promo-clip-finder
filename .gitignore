@@ -1,0 +1,23 @@
+# Confidential Kuku scripts - never commit
+data/
+*.zip
+**/episode-*.txt
+
+# Generated outputs
+outputs/
+outputs_*/
+
+# Hand-picked promo moments point into the confidential scripts
+gold.csv
+
+# Solution doc quotes script lines - submitted as a PDF, not published
+solution_doc.*
+
+# The assignment brief (shared with candidates only) and stray files
+Kuku*.pdf
+/python
+
+# Python
+__pycache__/
+*.pyc
+.env

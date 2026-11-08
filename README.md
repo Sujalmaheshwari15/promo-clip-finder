@@ -1,0 +1,123 @@
+# Promo Finder
+
+Finds the best 20–60 second promo clips in a microdrama's screenplays. Each promo opens on a hook, ends on a cliffhanger and should make sense to a new viewer. The output is a ranked list with exact timestamps for every segment, the hook, the cliffhanger, one line on why it works, scores and warning flags.
+
+Python standard library only (3.10+). Nothing to install.
+
+```
+python run.py "path/to/show-folder-or.zip"                        # rules only, about 5 s
+python run.py "path/to/show" --provider groq --min-interval 3     # + LLM judge on the top 60, about 6 min
+python eval.py                                                    # check the run against the scripts
+```
+
+## How it works
+
+```
+scripts ─▶ parse ─▶ candidate cuts ─▶ rule scores ─▶ de-duplicate ─▶ LLM judge (top 60) ─▶ posting order ─▶ outputs
+           (code)    (code)            (code)         (code)          (AI, optional)        (code)
+```
+
+| Step | File | What it does |
+|---|---|---|
+| Parse | `promo_finder/parser.py` | Turns every script into timed events (camera, action, sound, dialogue) with beat IDs like `E07-B031`. Tolerates format quirks and records them as issues instead of crashing. |
+| Candidates | `promo_finder/candidates.py` | Every legal cut: it starts on a dialogue or action beat and ends on a story beat, never mid-sentence or on "Cut to black". Two shapes: **continuous** (20–60 s) and **stitched** (a 10–35 s hook segment + a 5–20 s cliffhanger segment later in the same or the next episode). About 17,600 candidates for 50 episodes. |
+| Rule scores | `promo_finder/features.py` | Cheap and explainable. Five scores (0–1), each with reasons: **hook** (only the first 3 s), **cliffhanger** (the final moment; calm or resolved endings are penalised), **standalone** (penalties for opening on an answer, mid-sentence or across a time jump), **intensity**, and **length** (28–45 s is best). Weights are in one place (`WEIGHTS`). |
+| De-duplicate | `candidates.deduplicate` | Best first. A promo is dropped if it shares more than 35% of its footage with a better one, or reuses its hook or cliffhanger beat. Quota: 4 continuous + 2 stitched per episode. |
+| LLM judge | `promo_finder/judge.py` | The model sees **only the clip** (what a new viewer sees) and returns JSON scores, a verdict and a reason. It refers to moments **only by beat ID, never by timestamp**. Code validates everything: invalid cuts are ignored, quotes not found in the script are dropped, and any timestamps it writes are removed. Final score = 0.5 × rules + 0.5 × LLM. |
+| Posting order | `promo_finder/pipeline.py` | LLM-checked promos first (an LLM "skip" goes last), then by final score plus a small early-episode bonus. The top 10 never repeat an episode. |
+| Outputs | `promo_finder/report.py` | See below. |
+
+**Timestamps can't be invented.** Every time in the output comes from the parser. The LLM can only point at beat IDs that code looks up and checks.
+
+## Outputs (`outputs/`)
+
+| File | Contents |
+|---|---|
+| `report.md` | Top 15 (segments, hook, cliffhanger, why, scores, flags), coverage by episode, and an automatic "Where it picks badly" section |
+| `report.html` | Every promo in one self-contained page: search, filters, sortable columns |
+| `promos.csv` / `promos.json` | The full ranked list (JSON has every score, reason and LLM judgement) |
+| `llm_raw.jsonl` | Every prompt and **unedited** LLM reply |
+| `llm_cache.jsonl` | Saved LLM answers. Re-runs only ask about new promos (`--no-cache` to disable) |
+| `run_meta.json` | Model, settings, timings, input fingerprint, Python version |
+| `eval.md` / `eval.json` | Written by `eval.py` |
+
+## LLM providers (swap with one flag)
+
+| `--provider` | Key env var | Default model (override with `--model`) |
+|---|---|---|
+| `groq` | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-3.5-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | `meta-llama/llama-3.3-70b-instruct:free` |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` (native Messages API) |
+| `ollama` | none | `llama3.1:8b` (local) |
+| `custom` | `--api-key-env NAME` | `--base-url https://host/v1 --model NAME` (any OpenAI-compatible API) |
+| `mock` | none | Offline fake, for tests and demos |
+| `none` | none | Rules only (default) |
+
+Model names change often. `--list-models` prints what your key can use. Every provider except `anthropic` goes through one plain-HTTP client for the `/chat/completions` API; `anthropic` uses its native API through a small adapter.
+
+**Setting a key in Windows Command Prompt:** `set GROQ_API_KEY=your-key`, with no spaces around `=` and no quotes, in the same window you run from. In PowerShell: `$env:GROQ_API_KEY = "your-key"`. To keep it permanently: `setx GROQ_API_KEY "your-key"`, then open a new terminal.
+
+## Options (`run.py`)
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--out` | `outputs` | Output folder |
+| `--top` | 60 | How many promos the LLM judges |
+| `--min-interval` | 0 | Seconds between LLM calls (free tiers: 3–8) |
+| `--continuous-per-episode` / `--stitched-per-episode` | 4 / 2 | De-duplication quota |
+| `--max-overlap` | 0.35 | Maximum shared footage between two promos |
+| `--reasoning-effort` | per preset | For reasoning models (`low`, `medium`, `high`, `off`) |
+| `--max-retries`, `--timeout`, `--ca-bundle` | 4, 90, none | Network settings |
+
+## Checking quality
+
+```
+python eval.py                         # 8 hard checks against the scripts + soft checks; exit code 1 on failure
+python eval.py --gold gold.csv         # precision/recall against hand-picked moments (episode,start,end,note)
+python human_check.py make             # blind rating sheet: top picks mixed with hidden low-ranked controls
+python human_check.py score            # reveals the key and reports human vs tool agreement
+```
+
+Hard checks: length 20–60 s · cuts on real beats · a story beat in the first 3 s · no mid-line cuts · stitched segments in story order · overlap ≤ 35% · every hook, cliffhanger and LLM quote exists in the script · ranking rules respected.
+
+## Tests
+
+```
+for %f in (tests\test_*.py) do python %f        # Windows cmd
+for f in tests/test_*.py; do python "$f"; done   # bash
+```
+77 tests, all offline (a local fake server stands in for LLM providers). The test scripts are made up, so no confidential text is in the repo.
+
+## Troubleshooting (all seen while building this)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `SSL: CERTIFICATE_VERIFY_FAILED ... unable to get local issuer` | This Python has no trusted root certificates (e.g. MSYS2 Python) | The tool falls back to system bundles automatically; else use another Python, `--ca-bundle file.pem` or `SSL_CERT_FILE` |
+| `HTTP 404 ... model does not exist` | The provider retired the model name | `--list-models`, then `--model NAME` |
+| `HTTP 503 high demand` | That model is overloaded | Retry later or pick another `--model` |
+| `HTTP 429 ... per minute` | Free-tier token limit | Handled automatically (waits as told); raise `--min-interval` to avoid it |
+| `daily free-tier quota used up` | e.g. Gemini free tier: 20 requests per model per day | Another `--provider`/`--model`, or wait. Cached answers are kept |
+| `HTTP 403 error code: 1010` | Cloudflare blocked the client | Fixed (the tool sends its own User-Agent); if it persists, check VPN or proxy |
+| `environment variable ... is not set` | Key set in another window, or typed as `set X = key` | Set it in the same window; spaces and quotes are tolerated |
+| Ctrl+C doesn't stop a run on Windows | Python is waiting on the network | Close the terminal, or wait for `--timeout` |
+
+## Limits (honest)
+
+- Keyword rules miss quiet drama: a hidden-identity reveal or a defiant monologue with no loud words scores low. A blind human check confirmed this. The LLM judge partly compensates.
+- The rules overrate "makes sense on its own" (0.94 on average vs 0.60 from the LLM) and overrate generic angry arguments.
+- LLM judges disagree with each other (Gemini and gpt-oss gave different verdicts on 4 of 10 clips). Treat the LLM as a filter; a human editor approves before posting.
+- The word lists are tuned to drama in general but tested on one period romance; a modern show may need a few extra words.
+
+## Layout
+
+```
+run.py              one-command pipeline
+eval.py             checks a run against the scripts
+human_check.py      blind human rating
+promo_finder/       parser, candidates, features, llm, judge, pipeline, report
+tests/              77 offline tests
+```
+
+The input scripts are confidential: `data/`, `*.zip`, the show folder, `outputs/` and `gold.csv` are git-ignored.
