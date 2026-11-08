@@ -41,6 +41,65 @@ def input_fingerprint(path: Path) -> dict:
     return {"files": len(names), "sha256": h.hexdigest()[:16]}
 
 
+def run_show(in_path: Path, out_dir: Path, client, top: int = 60, quota: dict | None = None,
+             max_overlap: float = 0.35, use_cache: bool = True, say=print, started: str | None = None,
+             show_name: str | None = None):
+    """Run the whole pipeline and write every output file. Shared by the CLI (main) and the web app.
+
+    Returns (result, meta, paths, llm_log_path).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    started = started or time.strftime("%Y-%m-%d %H:%M:%S")
+    quota = quota or dict(DEFAULT_QUOTA)
+    # Fresh raw log for this run (fall back to a timestamped name if the old one is open elsewhere).
+    llm_log = out_dir / "llm_raw.jsonl"
+    try:
+        llm_log.unlink(missing_ok=True)
+    except PermissionError:
+        llm_log = out_dir / f"llm_raw_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+
+    result = pipeline.run_pipeline(str(in_path), client=client, top_n=top, quota=quota,
+                                   max_overlap=max_overlap, llm_log_path=str(llm_log) if client else None,
+                                   say=say, llm_cache_path=str(out_dir / "llm_cache.jsonl") if use_cache else None)
+
+    meta = {
+        "tool_version": VERSION,
+        "show": show_name or (in_path.stem if in_path.is_file() else in_path.name),
+        "input": str(in_path),
+        "input_fingerprint": input_fingerprint(in_path),
+        "started_at": started,
+        "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "episodes": len(result.episodes),
+        "runtime_minutes": round(sum(e.duration for e in result.episodes) / 60, 1),
+        "parse_issues": sum(len(e.issues) for e in result.episodes),
+        "candidates": result.n_candidates,
+        "promos": len(result.promos),
+        "dedupe_drops": result.drops,
+        "llm": {
+            "label": client.label if client else "none (rules only)",
+            "provider": client.cfg.name if client else "none",
+            "model": client.cfg.model if client else None,
+            "judged_top_n": top if client else 0,
+            **{k: v for k, v in result.llm_stats.items()},
+            "raw_log": llm_log.name if client else None,
+        },
+        "settings": {
+            "rule_weights": features.WEIGHTS,
+            "llm_weights": judge.LLM_WEIGHTS,
+            "final_score": f"{judge.RULE_SHARE} * rules + {1 - judge.RULE_SHARE} * llm (rules only if not judged)",
+            "quota_per_episode": quota,
+            "max_overlap": max_overlap,
+            "early_episode_bonus": pipeline.EARLY_EPISODE_BONUS,
+            "top_distinct_episodes": pipeline.TOP_DISTINCT,
+        },
+        "timings_s": result.timings,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+    }
+    paths = write_outputs(result, meta, out_dir)
+    return result, meta, paths, llm_log
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Find the best 20-60 s promo clips in microdrama scripts.")
     ap.add_argument("input", help="folder of episode .txt scripts, or a .zip of them")
@@ -59,7 +118,6 @@ def main(argv: list[str] | None = None) -> int:
     if not in_path.exists():
         say(f"Input not found: {in_path}")
         return 2
-    out_dir.mkdir(parents=True, exist_ok=True)
     started = time.strftime("%Y-%m-%d %H:%M:%S")
 
     try:
@@ -71,54 +129,10 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(client.list_models()) if client else "no LLM provider selected")
         return 0
 
-    # Fresh raw log for this run (fall back to a timestamped name if the old one is open elsewhere).
-    llm_log = out_dir / "llm_raw.jsonl"
-    try:
-        llm_log.unlink(missing_ok=True)
-    except PermissionError:
-        llm_log = out_dir / f"llm_raw_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
-
     quota = {"continuous": args.continuous_per_episode, "stitched": args.stitched_per_episode}
-    result = pipeline.run_pipeline(str(in_path), client=client, top_n=args.top, quota=quota,
-                                   max_overlap=args.max_overlap, llm_log_path=str(llm_log) if client else None,
-                                   say=say,
-                                   llm_cache_path=None if args.no_cache else str(out_dir / "llm_cache.jsonl"))
-
-    meta = {
-        "tool_version": VERSION,
-        "show": in_path.stem if in_path.is_file() else in_path.name,
-        "input": str(in_path),
-        "input_fingerprint": input_fingerprint(in_path),
-        "started_at": started,
-        "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "episodes": len(result.episodes),
-        "runtime_minutes": round(sum(e.duration for e in result.episodes) / 60, 1),
-        "parse_issues": sum(len(e.issues) for e in result.episodes),
-        "candidates": result.n_candidates,
-        "promos": len(result.promos),
-        "dedupe_drops": result.drops,
-        "llm": {
-            "label": client.label if client else "none (rules only)",
-            "provider": client.cfg.name if client else "none",
-            "model": client.cfg.model if client else None,
-            "judged_top_n": args.top if client else 0,
-            **{k: v for k, v in result.llm_stats.items()},
-            "raw_log": llm_log.name if client else None,
-        },
-        "settings": {
-            "rule_weights": features.WEIGHTS,
-            "llm_weights": judge.LLM_WEIGHTS,
-            "final_score": f"{judge.RULE_SHARE} * rules + {1 - judge.RULE_SHARE} * llm (rules only if not judged)",
-            "quota_per_episode": quota,
-            "max_overlap": args.max_overlap,
-            "early_episode_bonus": pipeline.EARLY_EPISODE_BONUS,
-            "top_distinct_episodes": pipeline.TOP_DISTINCT,
-        },
-        "timings_s": result.timings,
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-    }
-    paths = write_outputs(result, meta, out_dir)
+    result, meta, paths, llm_log = run_show(in_path, out_dir, client, top=args.top, quota=quota,
+                                            max_overlap=args.max_overlap, use_cache=not args.no_cache,
+                                            say=say, started=started)
 
     say("")
     st = result.llm_stats

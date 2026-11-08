@@ -1,0 +1,89 @@
+EPISODE NUMBER: Episode 2
+EPISODE LOGLINE: Linda threatens to expose the contract marriage, and Maya discovers her late mother's will was forged to cut her out.
+CONTINUITY NOTES: Picks up right after Daniel's announcement at the party.
+
+--- SCRIPT START ---
+
+SCENE 01
+Scene heading: INT. HOTEL CORRIDOR – NIGHT
+Scene start: 00:00.00
+Scene end: 00:28.10
+
+Actions and dialogue:
+
+**ACTION:**
+Start: (00:00.20) | End: (00:03.00)
+Linda grabs Maya's wrist and drags her into an empty corridor.
+
+**LINDA (Furious, Low):**
+Start: (00:03.50) | End: (00:07.30)
+"A contract marriage? Do you think I'm stupid?"
+
+**MAYA (Defiant):**
+Start: (00:07.80) | End: (00:10.60)
+"How do you know about the contract?"
+
+**LINDA (Threatening):**
+Start: (00:11.10) | End: (00:15.90)
+"Leave him, or the whole city will know he bought you."
+
+**MAYA (Steady):**
+Start: (00:16.40) | End: (00:20.20)
+"Then tell them. I'm done being afraid of you."
+
+**LINDA (Sinister):**
+Start: (00:20.70) | End: (00:24.50)
+"Brave words. Your father's hospital bills say otherwise."
+
+**ACTION:**
+Start: (00:25.00) | End: (00:27.80)
+Linda shoves an envelope into Maya's hands and walks away.
+
+SCENE 02
+Scene heading: INT. DANIEL'S PENTHOUSE – LATER
+Scene start: 00:28.10
+Scene end: 00:59.00
+
+Actions and dialogue:
+
+**CAMERA:**
+Start: (00:28.10) | End: (00:31.10)
+Maya sits alone at a long glass table, the envelope open in front of her.
+
+**ACTION:**
+Start: (00:29.80) | End: (00:32.60)
+Maya unfolds a document: her mother's will. Her hands start to shake.
+
+**MAYA (Confused):**
+Start: (00:33.10) | End: (00:35.90)
+"This isn't Mom's handwriting."
+
+**DANIEL (Concerned):**
+Start: (00:36.40) | End: (00:38.20)
+"What is it?"
+
+**MAYA (Trembling):**
+Start: (00:38.70) | End: (00:43.50)
+"Mom left the house to me. This says she left everything to Linda."
+
+**DANIEL (Grave):**
+Start: (00:44.00) | End: (00:46.80)
+"Then someone forged it."
+
+**ACTION:**
+Start: (00:47.30) | End: (00:51.10)
+Daniel takes the will and holds it to the light. A faint second signature shows through.
+
+**DANIEL (Sharp):**
+Start: (00:51.60) | End: (00:54.40)
+"There's another name under this one."
+
+**MAYA (Breathless):**
+Start: (00:54.90) | End: (00:57.70)
+"Who signed this?"
+
+**CAMERA:**
+Start: (00:58.00) | End: (00:59.00)
+Extreme close-up on the hidden signature, too faint to read.
+
+--- SCRIPT END ---

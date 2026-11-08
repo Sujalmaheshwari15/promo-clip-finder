@@ -1,0 +1,89 @@
+EPISODE NUMBER: Episode 3
+EPISODE LOGLINE: Vanessa frames Maya for stealing a diamond necklace at a charity gala, but the security footage reveals a betrayal no one saw coming.
+CONTINUITY NOTES: One week later. Maya is now publicly known as Daniel's wife.
+
+--- SCRIPT START ---
+
+SCENE 01
+Scene heading: INT. CHARITY GALA – NIGHT
+Scene start: 00:00.00
+Scene end: 00:27.40
+
+Actions and dialogue:
+
+**ACTION:**
+Start: (00:00.20) | End: (00:03.00)
+Vanessa screams and points at Maya across the crowded gala.
+
+**VANESSA (Hysterical):**
+Start: (00:03.50) | End: (00:07.30)
+"My necklace! She stole my diamond necklace!"
+
+**MAYA (Shocked):**
+Start: (00:07.80) | End: (00:10.60)
+"What? I haven't been anywhere near you."
+
+**ACTION:**
+Start: (00:11.10) | End: (00:13.90)
+A security guard grabs Maya's purse and turns it upside down.
+
+**SOUND FX:**
+Start: (00:14.40) | End: (00:16.20)
+A diamond necklace clatters onto the marble floor.
+
+**GUARD (Stern):**
+Start: (00:16.70) | End: (00:19.50)
+"Ma'am, you'll need to come with us."
+
+**VANESSA (Triumphant):**
+Start: (00:20.00) | End: (00:22.80)
+"Once a thief, always a thief."
+
+**MAYA (Furious):**
+Start: (00:23.30) | End: (00:27.10)
+"I didn't take it, and you know that. Check the cameras."
+
+SCENE 02
+Scene heading: INT. SECURITY OFFICE – CONTINUOUS
+Scene start: 00:27.40
+Scene end: 00:53.00
+
+Actions and dialogue:
+
+**CAMERA:**
+Start: (00:27.40) | End: (00:29.40)
+Rows of monitors glow in a dark security office.
+
+**ACTION:**
+Start: (00:28.60) | End: (00:31.40)
+Daniel leans over the guard's shoulder as the footage rewinds.
+
+**DANIEL (Cold):**
+Start: (00:31.90) | End: (00:34.70)
+"Stop. Go back ten seconds."
+
+**CAMERA:**
+Start: (00:35.00) | End: (00:38.00)
+On screen: a figure slips the necklace into Maya's purse.
+
+**GUARD (Surprised):**
+Start: (00:36.70) | End: (00:38.50)
+"That's not the sister."
+
+**MAYA (Disbelieving):**
+Start: (00:39.00) | End: (00:41.80)
+"No. That's impossible."
+
+**ACTION:**
+Start: (00:42.30) | End: (00:46.10)
+The figure on screen turns toward the camera. Maya gasps and steps back in horror.
+
+**MAYA (Devastated):**
+Start: (00:46.60) | End: (00:48.40)
+"Dad?"
+
+**DANIEL (Grave):**
+Start: (00:48.90) | End: (00:52.70)
+"Your father planted it. The question is why."
+
+--- SCRIPT END ---
