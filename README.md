@@ -12,7 +12,7 @@ python eval.py                                                    # check the ru
 
 ## Web demo
 
-**Live app:** [add your Streamlit link here]. Click **▶ Find promos** to run on a short, original demo show, or upload your own scripts (.zip or .txt). Rules-only runs take a few seconds. To try the AI judge, pick `mock` (offline), or pick a provider and paste your own key; it's used only for that run.
+**Live app:** <https://promo-clip-finder-chr7evebq9yvwjppoxpdxk.streamlit.app>. Click **▶ Find promos** to run on a short, original demo show, or upload your own scripts (.zip or .txt). Rules-only runs take a few seconds. To try the AI judge, pick `mock` (offline), or pick a provider and paste your own key; it's used only for that run.
 
 Run it locally: `pip install -r requirements.txt` then `streamlit run app.py`. Only the web page needs Streamlit; the tool itself is standard-library only.
 
