@@ -42,6 +42,9 @@ st.markdown(
     "script; the optional AI judge may only point at beat IDs, never write times. "
     f"[Source code & README]({REPO_URL})"
 )
+st.caption("On the real 50-episode show from the assignment (confidential, not included here) it found "
+           "**214 distinct promos from 17,612 candidate cuts** and passed all 8 quality checks. "
+           "The demo below is a short, made-up 3-episode show, so it yields only a handful.")
 
 # ---------------------------------------------------------------- sidebar: input + settings
 
@@ -70,9 +73,24 @@ with st.sidebar:
         model = st.text_input("Model", value=default_model)
         if provider_key == "custom":
             base_url = st.text_input("Base URL (…/v1)", placeholder="https://host/v1")
-    top_n = st.slider("Promos for the AI to judge", 3, 60, 10,
-                      help="Free tiers rate-limit; 10 takes about a minute.")
-    min_interval = st.number_input("Seconds between AI calls", 0.0, 30.0, 3.0, 1.0)
+    top_n, min_interval = 10, 3.0
+    if provider_key != "none":   # these only matter when an AI judge is used
+        top_n = st.slider("How many of the top promos the AI re-scores", 3, 60, 10,
+                          help="This does NOT create promos - it picks how many of the promos found get an AI "
+                               "second opinion (one call each). Free tiers rate-limit; 10 takes about a minute.")
+        if provider_key != "mock":
+            min_interval = st.number_input("Seconds between AI calls", 0.0, 30.0, 3.0, 1.0,
+                                           help="Spaces out calls to stay under free-tier rate limits.")
+
+    st.header("3 · How many promos")
+    with st.expander("Advanced"):
+        max_overlap = st.slider("Max shared footage between two promos", 0.20, 0.80, 0.35, 0.05,
+                                help="The main limit on how many promos you get. Higher = more promos, "
+                                     "but more of them are near-copies of each other.")
+        per_cont = st.number_input("Continuous promos per episode (max)", 1, 12, 4)
+        per_stitch = st.number_input("Stitched promos per episode (max)", 0, 8, 2)
+        st.caption("Defaults (35%, 4 + 2) keep every promo genuinely different. Short episodes fit only a few "
+                   "distinct 20-60 s clips.")
 
     run_clicked = st.button("▶ Find promos", type="primary", width="stretch")
 
@@ -134,8 +152,9 @@ if run_clicked:
                 log_box.write(msg)
 
             try:
-                result, meta, paths, llm_log = run_show(in_path, out_dir, client, top=top_n,
-                                                        use_cache=False, say=say, show_name=show_name)
+                result, meta, paths, llm_log = run_show(
+                    in_path, out_dir, client, top=top_n, use_cache=False, say=say, show_name=show_name,
+                    quota={"continuous": int(per_cont), "stitched": int(per_stitch)}, max_overlap=max_overlap)
                 with contextlib.redirect_stdout(io.StringIO()):
                     evaluator.main(["--out", str(out_dir), "--input", str(in_path)])
                 files = {p.name: p.read_bytes() for p in sorted(out_dir.iterdir()) if p.is_file()}
