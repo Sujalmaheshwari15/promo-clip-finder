@@ -170,9 +170,13 @@ c1.metric("Episodes", meta["episodes"])
 c2.metric("Candidate cuts", f"{meta['candidates']:,}")
 c3.metric("Distinct promos", meta["promos"])
 c4.metric("AI-judged", meta["llm"].get("judged", 0))
-c5.metric("Quality checks", "8/8 pass" if passed else "issues")
+c5.metric("Checks passed", "8/8" if passed else "✗")
 st.caption(f"Show: **{meta['show']}** · AI judge: {meta['llm']['label']} · "
            f"{meta['runtime_minutes']} min of show")
+if meta["llm"].get("provider") == "mock":
+    st.warning("**Mock AI judge:** it returns *random* scores and verdicts. It only shows how the AI step "
+               "plugs in (validation, blending, ranking). For real judgements pick a provider and paste a key, "
+               "or choose *none* to see the rule-based ranking alone.")
 
 
 def clip_text(p: dict) -> list[str]:
