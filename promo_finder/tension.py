@@ -49,7 +49,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 
-from .features import CALM_EMOTIONS, HOT_EMOTIONS, MUSIC_CUE, WARM_EMOTIONS, lex, tag_beat
+from .features import CALM_EMOTIONS, HOT_EMOTIONS, WARM_EMOTIONS, lex, tag_beat
 from .parser import Episode, Event, fmt_time
 
 # ---------------------------------------------------------------- settings (tune here)
@@ -338,13 +338,20 @@ def shape_score(first: TensionCurve, first_start: float, last: TensionCurve, las
     if resolved:
         peak = 0.0
 
-    v_cut = last.value_at(cut)
     if ends_episode:
-        withheld, after_fall = 0.5, None
-    else:
-        after = last.window(cut + STEP, cut + DROP_WITHIN)
-        after_fall = (v_cut - min(after)) if after else 0.0
-        withheld = _clamp(after_fall / DROP_SIZE)
+        # Episode ends at the cut: the cliffhanger score already judges this moment, and the curve
+        # misreads quiet act-outs (a steely last line, a two-word shock after a held shot).
+        # Measured on the full pack: 15 of 19 such promos dropped, incl. good ones.
+        # value None = not scored: the rule score uses the old five weights for this promo,
+        # so tension neither helps nor hurts it (a fixed 0.5 still cost endings ~0.03).
+        # No shape reasons either: "tension already resolved" on an unscored promo would mislead.
+        return ShapeResult(None, ["cuts at the episode's end - not scored, left to the cliffhanger score"],
+                           {"rise": rise, "peak": peak, "withheld": 0.5}, False)
+
+    v_cut = last.value_at(cut)
+    after = last.window(cut + STEP, cut + DROP_WITHIN)
+    after_fall = (v_cut - min(after)) if after else 0.0
+    withheld = _clamp(after_fall / DROP_SIZE)
 
     reasons = []
     if peak >= 0.75 and withheld >= 0.75:
@@ -361,23 +368,12 @@ def shape_score(first: TensionCurve, first_start: float, last: TensionCurve, las
         reasons.append("no tension peak in this episode")
     reasons.append(f"tension {'rises' if ref > start_mean + 0.05 else 'falls' if ref < start_mean - 0.05 else 'is level'}"
                    f" into the cut ({start_mean:.2f} -> {ref:.2f})")
-    if after_fall is None:
-        reasons.append("episode ends at the cut - drop not judged (0.5)")
-    elif withheld >= 0.75 and not reasons[0].endswith("withheld"):
+    if withheld >= 0.75 and not reasons[0].endswith("withheld"):
         reasons.append(f"resolution withheld (falls {after_fall:.2f} right after the cut)")
     elif withheld < 0.25:
         reasons.append("no drop after the cut")
-    parts = {"rise": rise, "peak": peak, "withheld": withheld}
-    if ends_episode:
-        # Episode ends at the cut: the cliffhanger score already judges this moment, and the curve
-        # misreads quiet act-outs (a steely last line, a two-word shock after a held shot).
-        # Measured on the full pack: 15 of 19 such promos dropped, incl. good ones.
-        # value None = not scored: the rule score uses the old five weights for this promo,
-        # so tension neither helps nor hurts it (a fixed 0.5 still cost endings ~0.03).
-        return ShapeResult(None, ["cuts at the episode's end - not scored, left to the cliffhanger score"]
-                           + reasons, parts, False)
     value = round((rise + peak + withheld) / 3, 3)
-    return ShapeResult(value, reasons, parts, resolved)
+    return ShapeResult(value, reasons, {"rise": rise, "peak": peak, "withheld": withheld}, resolved)
 
 
 def save_curves(curves: dict[int, TensionCurve], path) -> None:

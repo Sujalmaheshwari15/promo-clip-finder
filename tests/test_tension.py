@@ -177,6 +177,18 @@ class ShapeScoreTests(unittest.TestCase):
         self.assertTrue(c.reasons["tension_shape"][0].startswith("cuts at the episode's end"))
         self.assertNotIn(tension.RESOLVED_FLAG, c.flags)
 
+    def test_episode_end_cut_has_no_resolved_reason(self):
+        # 24-60 s: the fight peaks at ~38 s and has fallen into the calm by the episode's end.
+        curve = tension.analyse(self.ep)
+        args = (curve, 24.0, curve, 24.0, 56.0, 59.0)
+        mid = tension.shape_score(*args, ends_episode=False)       # same cut, scored normally
+        self.assertTrue(mid.resolved)
+        self.assertTrue(any(tension.RESOLVED_FLAG in r for r in mid.reasons))
+        end = tension.shape_score(*args, ends_episode=True)        # at the episode's end: not scored
+        self.assertIsNone(end.value)
+        self.assertFalse(end.resolved)
+        self.assertEqual(end.reasons, ["cuts at the episode's end - not scored, left to the cliffhanger score"])
+
     def test_no_tension_is_the_old_formula_on_demo_show(self):
         from promo_finder.candidates import generate_continuous, generate_stitched
         from promo_finder.features import WEIGHTS, Scorer, rule_weights
