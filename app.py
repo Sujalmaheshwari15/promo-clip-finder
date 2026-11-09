@@ -212,6 +212,41 @@ def clip_text(p: dict) -> list[str]:
     return out
 
 
+curves = json.loads(files["tension_curves.json"]) if "tension_curves.json" in files else {}
+
+
+def tension_chart_spec(p: dict, ep: int, curves: dict) -> dict | None:
+    """Vega-Lite spec: one episode's tension curve, the promo's segment(s) shaded, the cut as a rule."""
+    curve = curves.get(str(ep))
+    if not curve:
+        return None
+    segs = [s for s in p["segments"] if s["episode"] == ep]
+    last = p["segments"][-1]
+    layers = [
+        {"data": {"values": [{"s": s["start_sec"], "e": s["end_sec"]} for s in segs]},
+         "mark": {"type": "rect", "color": "#e07a5a", "opacity": 0.25},
+         "encoding": {"x": {"field": "s", "type": "quantitative"}, "x2": {"field": "e"}}},
+        {"data": {"values": [{"t": t, "v": v} for t, v in curve["points"]]},
+         "mark": {"type": "line", "strokeWidth": 2},
+         "encoding": {"x": {"field": "t", "type": "quantitative", "title": f"Episode {ep}, seconds"},
+                      "y": {"field": "v", "type": "quantitative", "title": "tension",
+                            "scale": {"domain": [0, 1]}},
+                      "tooltip": [{"field": "t", "title": "sec"}, {"field": "v", "title": "tension"}]}},
+    ]
+    if last["episode"] == ep:
+        layers.append({"data": {"values": [{"t": last["end_sec"]}]},
+                       "mark": {"type": "rule", "color": "#e07a5a", "strokeWidth": 2},
+                       "encoding": {"x": {"field": "t", "type": "quantitative"}}})
+    return {"height": 140, "width": "container", "layer": layers}
+
+
+def show_chart(spec: dict) -> None:
+    try:
+        st.vega_lite_chart(spec, width="stretch")          # newer Streamlit
+    except TypeError:
+        st.vega_lite_chart(spec, use_container_width=True)  # older Streamlit
+
+
 tab_top, tab_all, tab_quality, tab_files = st.tabs(["🏆 Top promos", "📋 All promos", "✅ Quality checks",
                                                     "⬇️ Download outputs"])
 
@@ -235,6 +270,17 @@ with tab_top:
                             f"Standalone **{s['standalone']:.2f}**")
                 llm = f"{s['llm']:.2f}" if s.get("llm") is not None else "—"
                 st.markdown(f"Rules **{s['rule']:.2f}** · AI **{llm}** · Final **{s.get('final') or s['rule']:.2f}**")
+            if curves:
+                ts = s.get("tension_shape")
+                why = (p["reasons"].get("tension_shape") or [""])[0]
+                label = (f"**{ts:.2f}** · {why}" if ts is not None
+                         else "not scored (episode end - the cliffhanger score decides)" if "tension_shape" in s
+                         else "not scored (run with tension off)")
+                st.markdown(f"**Tension curve** (clip shaded, cut = vertical line) · tension shape {label}")
+                for ep in p["episodes"]:
+                    spec = tension_chart_spec(p, ep, curves)
+                    if spec:
+                        show_chart(spec)
             st.markdown("**The clip, as the viewer sees it:**")
             st.markdown("  \n".join(clip_text(p)))
 

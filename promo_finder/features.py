@@ -12,7 +12,8 @@ Design choices (short version):
                   (opens on an answer, mid-conversation, time jump, one voice...)
     intensity   - how heated the whole clip is
     length      - 28-45 s is best
-  rule_score = weighted sum (WEIGHTS below, one place to tune).
+  rule_score = weighted sum (WEIGHTS below, one place to tune). With the tension curve on,
+  a sixth score, tension_shape (tension.py), gets TENSION_WEIGHT and the five are scaled down.
 - The scripts sometimes say "cliffhanger" in a music cue laid over a tender
   beat. That word is ignored: music cues (swell/score/drone/strings) never add
   cliffhanger points; only what happens on screen counts.
@@ -34,6 +35,16 @@ from .parser import Episode, Event, fmt_time
 # ---------------------------------------------------------------- weights (tune here)
 
 WEIGHTS = {"hook": 0.30, "cliffhanger": 0.30, "standalone": 0.20, "intensity": 0.12, "length": 0.08}
+TENSION_WEIGHT = 0.10    # tension_shape (tension.py); the five above are scaled down to make room
+
+
+def rule_weights(use_tension: bool = True) -> dict:
+    """WEIGHTS as-is with tension off (old ranking, bit for bit); scaled to sum to 1 with it on."""
+    if not use_tension:
+        return dict(WEIGHTS)
+    out = {k: round(v * (1 - TENSION_WEIGHT), 4) for k, v in WEIGHTS.items()}
+    out["tension_shape"] = TENSION_WEIGHT
+    return out
 HOOK_WINDOW = 3.0        # seconds a scrolling viewer gives you
 CLIFF_WINDOW = 3.0       # the final moment we judge the ending on
 LAST_LINE_WINDOW = 6.0   # the last spoken line still "is" the ending if it ended this close to the cut
@@ -222,10 +233,16 @@ def norm_speaker(name: str) -> str:
 class Scorer:
     """Holds tags for every event and scores segments / candidates."""
 
-    def __init__(self, episodes: list[Episode]):
+    def __init__(self, episodes: list[Episode], use_tension: bool = True):
         self.indexes = {ep.number: EpisodeIndex(ep) for ep in episodes}
         self.events = {ev.beat_id: ev for ep in episodes for ev in ep.events}
         self.tags = {bid: tag_beat(ev) for bid, ev in self.events.items()}
+        self.use_tension = use_tension
+        self.weights = rule_weights(use_tension)
+        self.curves = {}
+        if use_tension:
+            from . import tension  # here, not at the top: tension.py imports this module
+            self.curves = {ep.number: tension.analyse(ep) for ep in episodes}
 
     # ---- helpers
     def _events_between(self, ep_no: int, start: float, end: float, kinds=None) -> list[Event]:
@@ -423,6 +440,18 @@ class Scorer:
             v = 1.0 - 0.5 * (d - hi) / (60 - hi)
         return ScoreResult(clamp(v), [f"{d:.1f}s"])
 
+    # ---- tension shape (tension.py): rise into the cut, peak at the cut, drop left out
+    def tension_shape(self, cand: Candidate):
+        from .tension import shape_score
+        first, last = cand.segments[0], cand.segments[-1]
+        lines = self._events_between(last.episode, last.start, last.end, {"DIALOGUE"})
+        if lines and last.end - lines[-1].end <= LAST_LINE_WINDOW:
+            anchor = lines[-1].start           # same "closing moment" rule as the cliffhanger score
+        else:
+            anchor = self.events[last.end_beat].start
+        return shape_score(self.curves[first.episode], first.start, self.curves[last.episode], last.start,
+                           anchor, last.end, cand.ends_episode)
+
     # ---- everything
     def score(self, cand: Candidate) -> Candidate:
         hook_seg, cliff_seg = cand.segments[0], cand.segments[-1]
@@ -433,10 +462,19 @@ class Scorer:
             "intensity": self.intensity(cand),
             "length": self.length(cand),
         }
+        shape = None
+        if self.use_tension:
+            shape = self.tension_shape(cand)
+            parts["tension_shape"] = ScoreResult(shape.value, shape.reasons)
         cand.scores = {k: r.value for k, r in parts.items()}
-        cand.scores["rule"] = round(sum(WEIGHTS[k] * parts[k].value for k in WEIGHTS), 3)
+        # tension_shape None (episode-end cut / flat curve) -> the old five weights, untouched.
+        weights = self.weights if cand.scores.get("tension_shape") is not None else WEIGHTS
+        cand.scores["rule"] = round(sum(weights[k] * parts[k].value for k in weights), 3)
         cand.reasons = {k: r.reasons for k, r in parts.items()}
         cand.flags = self.flags(cand)
+        if shape is not None and shape.resolved:
+            from .tension import RESOLVED_FLAG
+            cand.flags.append(RESOLVED_FLAG)
         cand.hook_text = self.describe_hook(hook_seg)
         cand.cliffhanger_text = self.describe_cliff(cliff_seg)
         return cand
@@ -510,8 +548,8 @@ def print_report(episodes: list[Episode], out=sys.stdout) -> None:
         scorer.score(c)
 
     p(f"Scored {len(cands)} candidates")
-    for k in list(WEIGHTS) + ["rule"]:
-        vals = sorted(c.scores[k] for c in cands)
+    for k in list(scorer.weights) + ["rule"]:
+        vals = sorted(c.scores[k] for c in cands if c.scores.get(k) is not None)
         p(f"  {k:<12} mean {mean(vals):.2f}  p10 {vals[len(vals) // 10]:.2f}  "
           f"median {vals[len(vals) // 2]:.2f}  p90 {vals[9 * len(vals) // 10]:.2f}  max {vals[-1]:.2f}")
     flags = Counter(f for c in cands for f in c.flags)

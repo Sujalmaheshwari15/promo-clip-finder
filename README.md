@@ -29,7 +29,7 @@ scripts ─▶ parse ─▶ candidate cuts ─▶ rule scores ─▶ de-duplicat
 |---|---|---|
 | Parse | `promo_finder/parser.py` | Turns every script into timed events (camera, action, sound, dialogue) with beat IDs like `E07-B031`. Tolerates format quirks and records them as issues instead of crashing. |
 | Candidates | `promo_finder/candidates.py` | Every legal cut: it starts on a dialogue or action beat and ends on a story beat, never mid-sentence or on "Cut to black". Two shapes: **continuous** (20–60 s) and **stitched** (a 10–35 s hook segment + a 5–20 s cliffhanger segment later in the same or the next episode). About 17,600 candidates for 50 episodes. |
-| Rule scores | `promo_finder/features.py` | Cheap and explainable. Five scores (0–1), each with reasons: **hook** (only the first 3 s), **cliffhanger** (the final moment; calm or resolved endings are penalised), **standalone** (penalties for opening on an answer, mid-sentence or across a time jump), **intensity**, and **length** (28–45 s is best). Weights are in one place (`WEIGHTS`). |
+| Rule scores | `promo_finder/features.py` | Cheap and explainable. Five scores (0–1), each with reasons: **hook** (only the first 3 s), **cliffhanger** (the final moment; calm or resolved endings are penalised), **standalone** (penalties for opening on an answer, mid-sentence or across a time jump), **intensity**, and **length** (28–45 s is best), plus **tension shape** (see below). Weights are in one place (`WEIGHTS`). |
 | De-duplicate | `candidates.deduplicate` | Best first. A promo is dropped if it shares more than 35% of its footage with a better one, or reuses its hook or cliffhanger beat. Quota: 4 continuous + 2 stitched per episode. |
 | LLM judge | `promo_finder/judge.py` | The model sees **only the clip** (what a new viewer sees) and returns JSON scores, a verdict and a reason. It refers to moments **only by beat ID, never by timestamp**. Code validates everything: invalid cuts are ignored, quotes not found in the script are dropped, and any timestamps it writes are removed. Final score = 0.5 × rules + 0.5 × LLM. |
 | Posting order | `promo_finder/pipeline.py` | LLM-checked promos first (an LLM "skip" goes last), then by final score plus a small early-episode bonus. The top 10 never repeat an episode. |
@@ -42,7 +42,8 @@ scripts ─▶ parse ─▶ candidate cuts ─▶ rule scores ─▶ de-duplicat
 | File | Contents |
 |---|---|
 | `report.md` | Top 15 (segments, hook, cliffhanger, why, scores, flags), coverage by episode, and an automatic "Where it picks badly" section |
-| `report.html` | Every promo in one self-contained page: search, filters, sortable columns |
+| `report.html` | Every promo in one self-contained page: search, filters, sortable columns. The top 15 show a tension sparkline (clip shaded, cut marked) |
+| `tension_curves.json` | Each episode's tension curve (a point every 0.5 s), peaks and drops |
 | `promos.csv` / `promos.json` | The full ranked list (JSON has every score, reason and LLM judgement) |
 | `llm_raw.jsonl` | Every prompt and **unedited** LLM reply |
 | `llm_cache.jsonl` | Saved LLM answers. Re-runs only ask about new promos (`--no-cache` to disable) |
@@ -76,8 +77,41 @@ Model names change often. `--list-models` prints what your key can use. Every pr
 | `--min-interval` | 0 | Seconds between LLM calls (free tiers: 3–8) |
 | `--continuous-per-episode` / `--stitched-per-episode` | 4 / 2 | De-duplication quota |
 | `--max-overlap` | 0.35 | Maximum shared footage between two promos |
+| `--no-tension` | off | Turn off the tension-shape score: exactly the old five-score ranking, for comparison |
 | `--reasoning-effort` | per preset | For reasoning models (`low`, `medium`, `high`, `off`) |
 | `--max-retries`, `--timeout`, `--ca-bundle` | 4, 90, none | Network settings |
+
+## Tension curve (`promo_finder/tension.py`)
+
+A good promo starts while tension is climbing and cuts at a peak, just before it drops. The drop is the resolution the viewer has to come back for. So each episode becomes a curve of tension over time, and each promo is scored on its **shape**.
+
+**Building the curve** (no new word lists; it reuses the tagger from `features.py`):
+1. Each line, action or sound gets a raw value. Neutral is 0.2, and loud drama such as threats, violence, "(Furious)" or a shock reaction scores up to 1. Calm beats ("(Gentle)", smiles, embraces) drop to 0.
+   - Quiet menace ("(Steely, Resolute)", "without flinching") scores 0.5. This short list lives only in `tension.py`, so the old scores don't change.
+   - Questions and short shouted lines add a little.
+   - Music is read for mood: ominous music raises tension, tender music lowers it. The word "cliffhanger" in a music note is ignored.
+2. Values are laid on a 0.5 s grid. Where blocks overlap, the grid point takes the **maximum**, not the sum, so a moment doesn't look tense just because the writers wrote more blocks for it.
+3. **Held shots:** while only a camera note is running, the last value carries forward and fades towards neutral with a 3.5 s half-life. A silent close-up after a threat is still tense.
+4. The curve is smoothed with a 4 s moving average (about one exchange of lines), then divided by the episode's peak. 1.0 is the most tense moment of *that* episode, but a tense episode's quietest moment isn't forced down to 0.
+5. **Peaks** are local highs above 0.6, at least 3 s apart. A **drop** is a fall of more than 0.25 within 6 s after a peak.
+
+Print one episode's curve as text: `python -m promo_finder.tension "<show folder>" --episode 12`.
+
+**Scoring a promo** (`tension_shape`, 0–1, the mean of three parts, weight 0.10; the other five weights are scaled to make room):
+- **Rise:** is tension at the closing moment higher than in the first 5 s?
+- **Peak at cut:** is there a peak within 2 s of the closing moment? The closing moment is the last spoken line if it ended within 6 s of the cut, the same rule as the cliffhanger score.
+- **Resolution withheld:** does the curve fall right *after* the cut?
+- If a peak inside the clip has already dropped by the cut, the promo gets the flag *"cuts after the peak — tension already resolved"*.
+- Stitched promos are judged on the first segment for rise and the last segment for peak and drop.
+- **Cuts at an episode's end are not scored.** They keep the old five-score rule score. The cliffhanger score already judges the act-out, and the curve misreads quiet endings: a steely last line, or a two-word shock like "Her?!" after a held shot. Scoring them would push good endings down; at weight 0.10, 15 of 19 episode-end promos fell.
+
+**Effect on the 50-episode show (rules only):** 2 of the top 15 changed. `--no-tension` reproduces the old ranking exactly (the same promos, scores and ranks as before the change). The promos that move up cut on a peak mid-episode ("You poisoned my mother. You tortured my wife."). The ones that move down run on into the calm after the peak.
+
+**Limits:**
+- The curve is built from the same "heat" words as the other scores, so it **likes loud arguments**. It did not push down the generic shouting match that a human rated "would not post".
+- It doesn't recognise a happy ending as a resolution, so the existing calm-ending penalty still does that job.
+- On the 12 blind human ratings, the rule score with and without tension correlates the same (Spearman +0.25). Twelve clips is far too few to say whether tension helps.
+- Rise works against the hook score: a promo that opens hot gets a lower rise.
 
 ## Checking quality
 
@@ -96,7 +130,7 @@ Hard checks: length 20–60 s · cuts on real beats · a story beat in the first
 for %f in (tests\test_*.py) do python %f        # Windows cmd
 for f in tests/test_*.py; do python "$f"; done   # bash
 ```
-77 tests, all offline (a local fake server stands in for LLM providers). The test scripts are made up, so no confidential text is in the repo.
+94 tests, all offline (a local fake server stands in for LLM providers). The test scripts are made up, so no confidential text is in the repo.
 
 ## Troubleshooting (all seen while building this)
 
@@ -126,8 +160,8 @@ app.py              web demo (Streamlit)
 eval.py             checks a run against the scripts
 human_check.py      blind human rating
 demo/               small original demo show + its generator
-promo_finder/       parser, candidates, features, llm, judge, pipeline, report
-tests/              77 offline tests
+promo_finder/       parser, candidates, features, tension, llm, judge, pipeline, report
+tests/              94 offline tests
 ```
 
 The input scripts are confidential: `data/`, `*.zip`, the show folder, `outputs/` and `gold.csv` are git-ignored.

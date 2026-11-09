@@ -7,7 +7,10 @@ Design choices (short version):
   episode, and an automatic "where it picks badly" section built from the run
   itself (rule-vs-LLM disagreements, LLM 'skip' verdicts, weak episodes, flags).
 - report.html is one self-contained file (no internet needed): a filterable,
-  sortable table of every promo.
+  sortable table of every promo. The top 15 also get a tiny inline-SVG
+  sparkline of their episode's tension curve (clip shaded, cut marked) - plain
+  SVG built here in Python, no chart library, works offline.
+- tension_curves.json: every episode's curve, peaks and drops (see tension.py).
 - Timestamps are always written as MM:SS.ss, the same style as the scripts.
 """
 
@@ -22,12 +25,64 @@ from pathlib import Path
 from .candidates import Candidate
 from .parser import fmt_time
 from .pipeline import LOW_SCORE, RunResult
+from .tension import TensionCurve, analyse, save_curves
 
 DISAGREE = 0.20   # |rule - llm| at least this much = worth a human look
+SPARK_TOP = 15    # promos that get a tension sparkline in report.html
 
 
 def segments_text(c: Candidate) -> str:
     return " + ".join(f"Ep{s.episode} {fmt_time(s.start)}-{fmt_time(s.end)}" for s in c.segments)
+
+
+def tension_line(c: Candidate) -> str:
+    """'0.88 - cuts at a tension peak; resolution withheld' / 'not scored: ...' / '' (tension off)."""
+    if "tension_shape" not in c.scores:
+        return ""
+    v, why = c.scores["tension_shape"], (c.reasons.get("tension_shape") or [""])[0]
+    if v is None:
+        return "not scored (episode end - the cliffhanger score decides)" if "episode's end" in why else why
+    return f"{v:.2f} - {why}"
+
+
+def sparkline_svg(c: Candidate, curves: dict[int, TensionCurve], w: int = 168, h: int = 34) -> str:
+    """One small SVG per episode the promo uses: tension line, clip segment(s) shaded, cut marked.
+
+    Pure SVG (no script, no library). Colours come from the page's CSS variables via classes,
+    so it follows light/dark mode. A <title> gives a hover tooltip with the numbers.
+    """
+    out = []
+    last = c.segments[-1]
+    for ep in c.episodes:
+        curve = curves.get(ep)
+        if not curve or not curve.points:
+            continue
+        dur = curve.points[-1][0] or 1.0
+        x = lambda t: round(max(0.0, min(dur, t)) / dur * w, 1)  # noqa: E731
+        y = lambda v: round(h - 2 - v * (h - 4), 1)              # noqa: E731
+        segs = [sg for sg in c.segments if sg.episode == ep]
+        parts = [f'<rect class="ts" x="{x(sg.start)}" y="0" width="{max(1.0, x(sg.end) - x(sg.start))}" '
+                 f'height="{h}"/>' for sg in segs]
+        pts = curve.points[::2] + ([curve.points[-1]] if len(curve.points) % 2 == 0 else [])
+        parts.append('<path class="tl" d="M' + " L".join(f"{x(t)},{y(v)}" for t, v in pts) + '"/>')
+        tip = (f"Episode {ep} tension · clip "
+               + " + ".join(f"{fmt_time(sg.start)}-{fmt_time(sg.end)}" for sg in segs))
+        if last.episode == ep:
+            cx, cv = x(last.end), curve.value_at(last.end)
+            parts.append(f'<line class="tc" x1="{cx}" x2="{cx}" y1="0" y2="{h}"/>'
+                         f'<circle class="td" cx="{cx}" cy="{y(cv)}" r="3"/>')
+            tip += f" · cut at {fmt_time(last.end)} (tension {cv:.2f})"
+        if curve.peaks:
+            tip += " · peaks at " + ", ".join(fmt_time(pk["time"]) for pk in curve.peaks[:6])
+        label = f'<span class="sparklbl">Ep {ep}</span>' if len(c.episodes) > 1 else ""
+        out.append(f'{label}<svg class="spark" viewBox="0 0 {w} {h}" width="{w}" height="{h}" role="img" '
+                   f'aria-label="{html.escape(tip)}"><title>{html.escape(tip)}</title>{"".join(parts)}</svg>')
+    return "".join(out)
+
+
+def episode_curves(result: RunResult) -> dict[int, TensionCurve]:
+    """The run's curves, or computed for display when the run used --no-tension."""
+    return result.curves or {e.number: analyse(e) for e in result.episodes}
 
 
 def promo_record(c: Candidate) -> dict:
@@ -47,7 +102,7 @@ def write_json(result: RunResult, meta: dict, path: Path) -> None:
 
 CSV_COLUMNS = ["rank", "id", "shape", "duration", "segments", "hook", "cliffhanger", "why", "final", "rule",
                "llm", "hook_score", "cliffhanger_score", "standalone_score", "intensity_score", "llm_verdict",
-               "llm_adjusted", "flags"]
+               "llm_adjusted", "flags", "tension_shape_score"]
 
 
 def write_csv(result: RunResult, path: Path) -> None:
@@ -59,7 +114,7 @@ def write_csv(result: RunResult, path: Path) -> None:
             w.writerow([c.rank, c.id, c.shape, c.duration, segments_text(c), c.hook_text, c.cliffhanger_text,
                         c.why, s.get("final"), s.get("rule"), s.get("llm"), s.get("hook"), s.get("cliffhanger"),
                         s.get("standalone"), s.get("intensity"), (c.llm or {}).get("verdict", ""),
-                        c.llm_adjusted, "; ".join(c.flags)])
+                        c.llm_adjusted, "; ".join(c.flags), s.get("tension_shape")])
 
 
 # ---------------------------------------------------------------- markdown
@@ -133,6 +188,8 @@ def write_markdown(result: RunResult, meta: dict, path: Path, top: int = 15) -> 
         L.append(f"- **Why it works:** {_md(c.why)}")
         L.append(f"- **Scores:** final {s.get('final', s['rule']):.2f} (rules {s['rule']:.2f}, LLM {llm}) · "
                  f"hook {s['hook']:.2f} · cliffhanger {s['cliffhanger']:.2f} · standalone {s['standalone']:.2f}")
+        if tension_line(c):
+            L.append(f"- **Tension shape:** {_md(tension_line(c))}")
         if c.llm_adjusted:
             L.append(f"- **Cut adjusted by LLM suggestion:** {c.llm_adjusted}")
         if c.flags:
@@ -161,7 +218,8 @@ def write_markdown(result: RunResult, meta: dict, path: Path, top: int = 15) -> 
     L.append("")
     L.append("## Files\n")
     L.append("`promos.json` (everything) · `promos.csv` (spreadsheet) · `report.html` (filterable table) · "
-             "`llm_raw.jsonl` (unedited LLM replies) · `run_meta.json` (settings, timings, versions)")
+             "`llm_raw.jsonl` (unedited LLM replies) · `run_meta.json` (settings, timings, versions) · "
+             "`tension_curves.json` (tension curve, peaks and drops per episode)")
     path.write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
@@ -193,6 +251,10 @@ th:hover{color:var(--fg)}td.num{text-align:right;font-variant-numeric:tabular-nu
 .post{color:var(--good);border-color:currentColor}.maybe{color:var(--warn);border-color:currentColor}.skip{color:var(--accent);border-color:currentColor}
 .flag{display:block;font-size:12px;color:var(--warn)}
 .bar{display:inline-block;height:6px;border-radius:3px;background:var(--accent);vertical-align:middle;margin-left:6px}
+.tens{min-width:180px;max-width:200px}.tens small{display:block;color:var(--mute);font-size:12px}
+.spark{display:block;margin:2px 0}.spark .tl{fill:none;stroke:var(--fg);stroke-width:1.5;stroke-linejoin:round}
+.spark .ts{fill:var(--accent);opacity:.2}.spark .tc{stroke:var(--accent);stroke-width:2}
+.spark .td{fill:var(--accent);stroke:var(--card);stroke-width:2}.sparklbl{display:block;font-size:11px;color:var(--mute)}
 </style></head><body><main>
 <h1>Promo candidates: __SHOW__</h1>
 <p class="sub">__SUB__</p>
@@ -206,14 +268,16 @@ th:hover{color:var(--fg)}td.num{text-align:right;font-variant-numeric:tabular-nu
 </div>
 <div class="wrap"><table><thead><tr>
 <th data-k="rank">#</th><th data-k="id">Promo</th><th data-k="duration">Len</th><th data-k="segments_text">Segments</th>
-<th data-k="hook">Hook (first 3 s)</th><th data-k="cliffhanger">Cliffhanger</th><th data-k="why">Why</th>
+<th data-k="hook">Hook (first 3 s)</th><th data-k="cliffhanger">Cliffhanger</th>
+<th data-k="tension" title="Episode tension curve with the clip shaded and the cut marked (top 15). Score: rises into the cut, cuts at a peak, leaves the drop out.">Tension</th><th data-k="why">Why</th>
 <th data-k="final">Final</th><th data-k="rule">Rules</th><th data-k="llm">LLM</th><th data-k="verdict">Verdict</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 </main>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const data = JSON.parse(document.getElementById('data').textContent);
-const rows = data.map(p => ({...p, final: p.scores.final ?? p.scores.rule, rule: p.scores.rule, llm: p.scores.llm}));
+const rows = data.map(p => ({...p, final: p.scores.final ?? p.scores.rule, rule: p.scores.rule, llm: p.scores.llm,
+  tension: p.scores.tension_shape}));
 let sortKey = 'rank', sortDir = 1;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num = v => v == null ? '—' : v.toFixed(2);
@@ -233,13 +297,14 @@ function render(){
     <td class="num">${p.duration.toFixed(1)}s</td>
     <td class="seg">${esc(p.segments_text).replaceAll(' + ', '<br>')}</td>
     <td class="q">${esc(p.hook)}</td><td class="q">${esc(p.cliffhanger)}</td>
+    <td class="tens">${p.spark || ''}${p.tension_text ? `<small>${esc(p.tension_text)}</small>` : '—'}</td>
     <td class="why">${esc(p.why)}${p.flags.map(f => `<span class="flag">⚠ ${esc(f)}</span>`).join('')}</td>
     <td class="num">${num(p.final)}<span class="bar" style="width:${Math.round(p.final * 40)}px"></span></td>
     <td class="num">${num(p.rule)}</td><td class="num">${num(p.llm)}</td>
     <td>${p.verdict ? `<span class="pill ${p.verdict}">${p.verdict}</span>` : '—'}</td></tr>`).join('');
 }
 document.querySelectorAll('th').forEach(th => th.addEventListener('click', () => {
-  const k = th.dataset.k; sortDir = (sortKey === k) ? -sortDir : (['final','rule','llm','duration'].includes(k) ? -1 : 1);
+  const k = th.dataset.k; sortDir = (sortKey === k) ? -sortDir : (['final','rule','llm','duration','tension'].includes(k) ? -1 : 1);
   sortKey = k; render(); }));
 ['q','shape','verdict','min','noflags'].forEach(id => document.getElementById(id).addEventListener('input', render));
 render();
@@ -248,10 +313,18 @@ render();
 
 
 def write_html(result: RunResult, meta: dict, path: Path) -> None:
-    records = [promo_record(c) for c in result.promos]
+    curves = episode_curves(result)
+    records = []
+    for c in result.promos:
+        r = promo_record(c)
+        r["tension_text"] = tension_line(c)
+        if c.rank <= SPARK_TOP:
+            r["spark"] = sparkline_svg(c, curves)   # built here from our own numbers, inserted as HTML
+        records.append(r)
     payload = json.dumps(records, ensure_ascii=False).replace("</", "<\\/")  # can't close the <script> early
     sub = (f"{meta['episodes']} episodes · {len(records)} promos · LLM: {meta['llm']['label']} · "
-           f"run {meta['finished_at']}. Click a column to sort.")
+           f"run {meta['finished_at']}. Click a column to sort. Top {SPARK_TOP}: tension sparkline "
+           f"(clip shaded, cut marked; hover for times).")
     page = (HTML_TEMPLATE.replace("__SHOW__", html.escape(meta["show"]))
             .replace("__SUB__", html.escape(sub)).replace("__DATA__", payload))
     path.write_text(page, encoding="utf-8")
@@ -263,10 +336,12 @@ def write_html(result: RunResult, meta: dict, path: Path) -> None:
 def write_outputs(result: RunResult, meta: dict, out_dir: Path) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {name: out_dir / name for name in
-             ("promos.json", "promos.csv", "report.md", "report.html", "run_meta.json")}
+             ("promos.json", "promos.csv", "report.md", "report.html", "run_meta.json",
+              "tension_curves.json")}
     write_json(result, meta, paths["promos.json"])
     write_csv(result, paths["promos.csv"])
     write_markdown(result, meta, paths["report.md"])
     write_html(result, meta, paths["report.html"])
+    save_curves(episode_curves(result), paths["tension_curves.json"])
     paths["run_meta.json"].write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     return paths

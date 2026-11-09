@@ -41,6 +41,8 @@ class RunResult:
     drops: dict
     llm_stats: dict
     timings: dict = field(default_factory=dict)
+    curves: dict = field(default_factory=dict)    # episode -> tension.TensionCurve ({} with --no-tension)
+    weights: dict = field(default_factory=dict)   # rule weights actually used
 
 
 def posting_order(promos: list[Candidate], n_episodes: int, max_episode: int) -> list[Candidate]:
@@ -88,7 +90,7 @@ def why_line(c: Candidate) -> str:
 def run_pipeline(input_path: str, client: LLMClient | None = None, top_n: int = 60,
                  quota: dict | None = None, max_overlap: float = 0.35,
                  llm_log_path: str | None = None, say=print,
-                 llm_cache_path: str | None = None) -> RunResult:
+                 llm_cache_path: str | None = None, use_tension: bool = True) -> RunResult:
     t: dict[str, float] = {}
 
     def step(name: str, start: float) -> None:
@@ -101,7 +103,7 @@ def run_pipeline(input_path: str, client: LLMClient | None = None, top_n: int = 
 
     s = time.monotonic()
     say(f"  {len(episodes)} episodes. Generating and scoring candidates...")
-    scorer = Scorer(episodes)
+    scorer = Scorer(episodes, use_tension=use_tension)
     cands = generate_continuous(episodes) + generate_stitched(
         episodes, hook_rank=scorer.hook_rank, cliff_rank=scorer.cliff_rank)
     for c in cands:
@@ -126,7 +128,7 @@ def run_pipeline(input_path: str, client: LLMClient | None = None, top_n: int = 
         c.why = why_line(c)
     max_ep = max(ep.number for ep in episodes)
     promos = posting_order(kept, len(episodes), max_ep)
-    return RunResult(episodes, promos, len(cands), drops, llm_stats, t)
+    return RunResult(episodes, promos, len(cands), drops, llm_stats, t, scorer.curves, scorer.weights)
 
 
 __all__ = ["run_pipeline", "posting_order", "RunResult", "WEIGHTS"]

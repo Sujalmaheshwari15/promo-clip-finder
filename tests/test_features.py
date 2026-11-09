@@ -145,9 +145,13 @@ class ScoreTests(unittest.TestCase):
 
     def test_rule_score_is_weighted_sum_in_range(self):
         ep = script([("ACTION", 0, 2, "She slaps him.")] + filler(2.5, 30))
-        c = Scorer([ep]).score(whole_clip(ep, 0, 29.5))
+        five = {"hook", "cliffhanger", "standalone", "intensity", "length"}
+        c = Scorer([ep], use_tension=False).score(whole_clip(ep, 0, 29.5))
         self.assertTrue(0 <= c.scores["rule"] <= 1)
-        self.assertEqual(set(c.reasons), {"hook", "cliffhanger", "standalone", "intensity", "length"})
+        self.assertEqual(set(c.reasons), five)
+        c = Scorer([ep]).score(whole_clip(ep, 0, 29.5))       # tension curve on: a sixth score
+        self.assertTrue(0 <= c.scores["rule"] <= 1)
+        self.assertEqual(set(c.reasons), five | {"tension_shape"})
 
 
 if __name__ == "__main__":

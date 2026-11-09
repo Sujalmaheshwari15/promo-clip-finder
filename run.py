@@ -17,7 +17,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from promo_finder import features, judge, pipeline
+from promo_finder import judge, pipeline
 from promo_finder.candidates import DEFAULT_QUOTA
 from promo_finder.llm import LLMError, add_llm_args, client_from_args
 from promo_finder.parser import fmt_time
@@ -43,7 +43,7 @@ def input_fingerprint(path: Path) -> dict:
 
 def run_show(in_path: Path, out_dir: Path, client, top: int = 60, quota: dict | None = None,
              max_overlap: float = 0.35, use_cache: bool = True, say=print, started: str | None = None,
-             show_name: str | None = None):
+             show_name: str | None = None, use_tension: bool = True):
     """Run the whole pipeline and write every output file. Shared by the CLI (main) and the web app.
 
     Returns (result, meta, paths, llm_log_path).
@@ -60,7 +60,8 @@ def run_show(in_path: Path, out_dir: Path, client, top: int = 60, quota: dict | 
 
     result = pipeline.run_pipeline(str(in_path), client=client, top_n=top, quota=quota,
                                    max_overlap=max_overlap, llm_log_path=str(llm_log) if client else None,
-                                   say=say, llm_cache_path=str(out_dir / "llm_cache.jsonl") if use_cache else None)
+                                   say=say, llm_cache_path=str(out_dir / "llm_cache.jsonl") if use_cache else None,
+                                   use_tension=use_tension)
 
     meta = {
         "tool_version": VERSION,
@@ -84,7 +85,8 @@ def run_show(in_path: Path, out_dir: Path, client, top: int = 60, quota: dict | 
             "raw_log": llm_log.name if client else None,
         },
         "settings": {
-            "rule_weights": features.WEIGHTS,
+            "rule_weights": result.weights,
+            "tension_curve": use_tension,
             "llm_weights": judge.LLM_WEIGHTS,
             "final_score": f"{judge.RULE_SHARE} * rules + {1 - judge.RULE_SHARE} * llm (rules only if not judged)",
             "quota_per_episode": quota,
@@ -110,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-overlap", type=float, default=0.35, help="max shared footage between two promos")
     ap.add_argument("--no-cache", action="store_true",
                     help="ask the LLM again even for promos it already judged (cache: <out>/llm_cache.jsonl)")
+    ap.add_argument("--no-tension", action="store_true",
+                    help="turn off the tension-curve score (old five-score ranking, for comparison)")
     add_llm_args(ap)
     args = ap.parse_args(argv)
 
@@ -132,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     quota = {"continuous": args.continuous_per_episode, "stitched": args.stitched_per_episode}
     result, meta, paths, llm_log = run_show(in_path, out_dir, client, top=args.top, quota=quota,
                                             max_overlap=args.max_overlap, use_cache=not args.no_cache,
-                                            say=say, started=started)
+                                            say=say, started=started, use_tension=not args.no_tension)
 
     say("")
     st = result.llm_stats
